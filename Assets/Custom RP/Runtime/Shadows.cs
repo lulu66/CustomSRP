@@ -25,6 +25,9 @@ public class Shadows
 	int shadowedDirectionalLightCount = 0;
 
 	static int dirShadowAtlasId = Shader.PropertyToID("_DirectionalShadowAtlas");
+	static int dirShadowMatricesId = Shader.PropertyToID("_DirectionalShadowMatrices");
+
+	static Matrix4x4[] dirShadowMatrices = new Matrix4x4[maxShadowedDirectionalLightCount];
 	public void Setup(ScriptableRenderContext context, CullingResults cullingResults, ShadowSettings shadowSettings)
 	{
 		this.context = context;
@@ -34,21 +37,24 @@ public class Shadows
 		shadowedDirectionalLightCount = 0;
 	}
 
-	public void ReserveDirectionalShadows(Light light, int visibleLightIndex)
+	public Vector2 ReserveDirectionalShadows(Light light, int visibleLightIndex)
 	{
 		if(shadowedDirectionalLightCount < maxShadowedDirectionalLightCount && light.shadows != LightShadows.None && light.shadowStrength > 0f)
 		{
 			if(cullingResults.GetShadowCasterBounds(visibleLightIndex, out Bounds b))
 			{
-				shadowedDirectionalLights[shadowedDirectionalLightCount++] = new ShadowedDirectionalLight { visibleLightIndex = visibleLightIndex };
+				shadowedDirectionalLights[shadowedDirectionalLightCount] = new ShadowedDirectionalLight { visibleLightIndex = visibleLightIndex };
+
+				return new Vector2(light.shadowStrength, shadowedDirectionalLightCount++);
 			}
 		}
+		return Vector2.zero;
 	}
 
 	public void Render()
 	{
 		if(shadowedDirectionalLightCount > 0)
-		{
+		{					
 			RenderDirectionalShadows();
 		}
 		else
@@ -80,16 +86,19 @@ public class Shadows
 		{
 			RenderDirectionalShadows(i, split, tileSize);
 		}
+		buffer.SetGlobalMatrixArray(dirShadowMatricesId, dirShadowMatrices);
+
 		buffer.EndSample(bufferName);
 		ExecuteBuffer();
 
 	}
 
 	//对viewport做偏移，以便渲染多个方向光阴影
-	void SetTileViewport(int index, int split, int tileSize)
+	Vector2 SetTileViewport(int index, int split, int tileSize)
 	{
 		Vector2 offset = new Vector2(index%split, index/split);
 		buffer.SetViewport(new Rect(offset.x * tileSize, offset.y * tileSize, tileSize, tileSize));
+		return offset;
 	}
 	void RenderDirectionalShadows(int index, int split, int tileSize)
 	{
@@ -97,10 +106,43 @@ public class Shadows
 		var shadowSetting = new ShadowDrawingSettings(cullingResults, light.visibleLightIndex);
 		cullingResults.ComputeDirectionalShadowMatricesAndCullingPrimitives(light.visibleLightIndex, 0, 1, Vector3.zero, tileSize, 0f, out Matrix4x4 viewMatrix, out Matrix4x4 projMatrix, out ShadowSplitData splitData);
 		shadowSetting.splitData = splitData;
-		SetTileViewport(index, split, tileSize);
+
+		//需要计算atlas shadow的矩阵
+		dirShadowMatrices[index] = ConvertToAtlasMatrix(projMatrix * viewMatrix, SetTileViewport(index, split, tileSize),split);
+
 		buffer.SetViewProjectionMatrices(viewMatrix, projMatrix);
+
 		ExecuteBuffer();
 		context.DrawShadows(ref shadowSetting); //只渲染含有shadowcaster pass的材质
+	}
+
+	Matrix4x4 ConvertToAtlasMatrix(Matrix4x4 m, Vector2 offset, int split)
+	{
+		//判断是否反转z值
+		if(SystemInfo.usesReversedZBuffer)
+		{
+			m.m20 = -m.m20;
+			m.m21 = -m.m21;
+			m.m22 = -m.m22;
+			m.m23 = -m.m23;
+
+		}
+
+		float scale = 1f / split;
+		m.m00 = (0.5f * (m.m00 + m.m30) + offset.x * m.m30) * scale;
+		m.m01 = (0.5f * (m.m01 + m.m31) + offset.x * m.m31) * scale;
+		m.m02 = (0.5f * (m.m02 + m.m32) + offset.x * m.m32) * scale;
+		m.m03 = (0.5f * (m.m03 + m.m33) + offset.x * m.m33) * scale;
+		m.m10 = (0.5f * (m.m10 + m.m30) + offset.y * m.m30) * scale;
+		m.m11 = (0.5f * (m.m11 + m.m31) + offset.y * m.m31) * scale;
+		m.m12 = (0.5f * (m.m12 + m.m32) + offset.y * m.m32) * scale;
+		m.m13 = (0.5f * (m.m13 + m.m33) + offset.y * m.m33) * scale;
+		m.m20 = 0.5f * (m.m20 + m.m30);
+		m.m21 = 0.5f * (m.m21 + m.m31);
+		m.m22 = 0.5f * (m.m22 + m.m32);
+		m.m23 = 0.5f * (m.m23 + m.m33);
+
+		return m;
 	}
 	void ExecuteBuffer()
 	{

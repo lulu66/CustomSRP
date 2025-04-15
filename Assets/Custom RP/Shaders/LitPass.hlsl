@@ -4,6 +4,7 @@
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/CommonMaterial.hlsl"
 #include "Surface.hlsl"
+#include "Shadows.hlsl"
 #include "BRDF.hlsl"
 #include "Light.hlsl"
 #include "Lighting.hlsl"
